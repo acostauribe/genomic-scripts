@@ -6,22 +6,29 @@
 #chmod u+x filter_variants.sh
 #./filter_variants.sh | tee filter_variants.log
 
-## Set up the name of your vcf file
+# 1. SET UP VARIABLES
+## Set up the name of your vcf file. your 'ANNOVAR file' will be named based on the vcf.
 vcf_file='redlat_exomes.neurodegeneration_genes148'
 annovar_file=${vcf_file}.hg38_multianno
+## Set up the path to the ANNOVAR database
 annovar_database='/home/acostauribe/bin/annovar/humandb/'
+## Set up reference genome
+genome_version='hg38'
 
-#bcftools view --min-ac 1  redlat_array.neurodegeneration_genes148.vcf >  redlat_array.neurodegeneration_genes148.mac1.vcf
-
+# 2. RUN ANNOVAR
 echo $(date)
 echo "Using ANNOVAR to annotate "${vcf_file}.vcf 
 
-#table_annovar.pl ${vcf_file}.vcf ${annovar_database} --buildver hg38 --outfile ${vcf_file} --protocol refGene,ensGene,exac03,gnomad30_genome,ALL.sites.2015_08,AFR.sites.2015_08,EUR.sites.2015_08,EAS.sites.2015_08,SAS.sites.2015_08,AMR.sites.2015_08,avsnp150,clinvar_20220320,dbnsfp33a,dbscsnv11,revel --operation g,g,f,f,f,f,f,f,f,f,f,f,f,f,f --nastring . --vcfinput --remove 
+## A. If you want to remove monomorphic variants, run the next two lines
+#mv ${vcf_file}.vcf > ${vcf_file}.original.vcf
+#bcftools view --min-ac 1  ${vcf_file}.original.vcf >  ${vcf_file}.vcf
 
-## Edit the ANNOVAR results header 
+table_annovar.pl ${vcf_file}.vcf ${annovar_database} --buildver ${genome_version} --outfile ${vcf_file} --protocol refGene,ensGene,exac03,gnomad30_genome,ALL.sites.2015_08,AFR.sites.2015_08,EUR.sites.2015_08,EAS.sites.2015_08,SAS.sites.2015_08,AMR.sites.2015_08,avsnp150,clinvar_20220320,dbnsfp33a,dbscsnv11,revel --operation g,g,f,f,f,f,f,f,f,f,f,f,f,f,f --nastring . --vcfinput --remove 
+
+## B. Edit the ANNOVAR results header 
 echo "Editing ANNOVAR header" 
 
-# Get the sample Ids from the vcf
+## C. Get the sample Ids from the vcf
 grep '#CHROM' ${annovar_file}.vcf > ${annovar_file}.chrom_line
 head -1 ${annovar_file}.txt > ${annovar_file}.header
 sed -i 's/ /\t/g' ${annovar_file}.header
@@ -29,7 +36,7 @@ cut -f -120 ${annovar_file}.header > ${annovar_file}.header_120
 paste ${annovar_file}.header_120 ${annovar_file}.chrom_line > ${annovar_file}.header_new
 
 
-# Edit values in ANNOVAR column IDs to make it more user friendly
+## D. Edit values in ANNOVAR column IDs to make it more user friendly
 awk -v OFS='\t' '{sub("AF","GnomAD_v3_all",$24);print}' ${annovar_file}.header_new > temp
 mv temp ${annovar_file}.header_new 
 sed -i 's/AF_raw/GnomAD_v3_raw/g' ${annovar_file}.header_new
@@ -56,29 +63,29 @@ sed -i 's/CLNDISDB/ClinVar_DiseaseDatabase/g' ${annovar_file}.header_new
 sed -i 's/CLNREVSTAT/ClinVar_ReviewStatus/g' ${annovar_file}.header_new
 sed -i 's/CLNSIG/ClinVar_Significance/g' ${annovar_file}.header_new
 
-# Paste edited header with annotations
+## E. Paste edited header with annotations
 sed '1d' ${annovar_file}.txt > ${annovar_file}.header_removed
 cat ${annovar_file}.header_new ${annovar_file}.header_removed > ${annovar_file}.txt
 
-## Count number of variants
+## F. Count number of variants
 echo "Number of variants in " ${annovar_file}.txt
 wc -l ${annovar_file}.txt | awk '{print $1-1}' #the awk command substracts the line of the header
 
-## Get protein altering variants
+## G. Get protein altering variants
 echo "Removing non protein coding variants" 
 awk -v OFS='\t' 'NR==1; NR > 1{ if(($6 == "exonic") || ($6 == "exonic;splicing") || ($6 == "splicing")) { print } }' ${annovar_file}.txt > ${annovar_file}.coding.txt
 
 echo "Number of variants in" ${annovar_file}.coding.txt
 wc -l ${annovar_file}.coding.txt | awk '{print $1-1}'
 
-## Exclude synonymous mutations
+## H. Exclude synonymous mutations
 echo "Removing synonymous variants"
 awk -v OFS='\t' 'NR==1; NR > 1{ if(($9 != "synonymous SNV") && ($6 != "unknown")) { print } }' ${annovar_file}.coding.txt > ${annovar_file}.coding.non-syn.txt
 
 echo "Number of variants in" ${annovar_file}.coding.non-syn.txt
 wc -l ${annovar_file}.coding.non-syn.txt | awk '{print $1-1}'
 
-## Extract variants in the top 25 genes
+## I. Extract variants in the top 25 genes
 #echo "Extracting variants in 25 genes for manual curation"
 #awk -F "\t" 'NR==1; NR > 1{ if(($7=="CHCHD10") || ($7=="CHMP2B") || ($7=="CSF1R") || ($7=="FUS") || ($7=="GRN") || ($7=="HNRNPA1") || ($7=="HNRNPA2B1") || ($7=="LRRK2") || ($7=="OPTN") || ($7=="PRNP") || ($7=="SNCA") || ($7=="SQSTM1") || ($7=="TARDBP") || ($7=="UBQLN2") || ($7=="VCP") || ($7=="ABCA7") || ($7=="APOE") || ($7=="APP") || ($7=="MAPT") || ($7=="PSEN1") || ($7=="PSEN2") || ($7=="SORL1") || ($7=="TBK1") || ($7=="TREM2") || ($7=="APOE")) { print } }' ${annovar_file}.coding.non-syn.txt > ${annovar_file}.coding.non-syn.top25.txt
 

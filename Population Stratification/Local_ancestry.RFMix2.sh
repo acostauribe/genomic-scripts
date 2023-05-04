@@ -12,9 +12,9 @@ GENETIC_MAP='genetic_map_hg19.txt'
 REF_COHORT_MAP=''  #file with the information of which sample belong to which ancestral group
 
 # Needed software
-#shapeit
-#vcftools
-#RFMix2
+#shapeit2: https://mathgen.stats.ox.ac.uk/genetics_software/shapeit/shapeit.html
+#vcftools: https://github.com/vcftools/vcftools
+#RFMix2: https://github.com/slowkoni/rfmix
 
 # Prep your files
 

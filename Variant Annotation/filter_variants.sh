@@ -8,14 +8,17 @@
 
 # 1. SET UP VARIABLES
 ## Set up the name of your vcf file. your 'ANNOVAR file' will be named based on the vcf.
-vcf_file='redlat_exomes.neurodegeneration_genes148'
+vcf_file=redlat_exomes.neurodegeneration_genes148
 annovar_file=${vcf_file}.hg38_multianno
 ## Set up the path to the ANNOVAR database
-annovar_database='/home/acostauribe/bin/annovar/humandb/'
+annovar_database=/home/acostauribe/bin/annovar/humandb/
 ## Set up reference genome
-genome_version='hg38'
+genome_version=hg38
 
-# 2. RUN ANNOVAR
+# 2. TURN ON THE FILE ANALYSES YOU WANT
+remove_monopmorphic=TRUE
+
+# 3. RUN ANNOVAR
 echo $(date)
 echo "Using ANNOVAR to annotate "${vcf_file}.vcf 
 

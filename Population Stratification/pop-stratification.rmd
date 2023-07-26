@@ -1,0 +1,436 @@
+---
+output:
+  html_document:
+    keep_md: yes
+---
+
+### Population Stratification
+**Developed by Juliana Acosta-Uribe for the ReD-Lat Consortium 2023**
+
+#### Data:
+In this tutorial we will perform a Principal Component Analysis (PCA) of a subset of individuals from the [1000 Genome project](https://www.internationalgenome.org/) `1000G.toy`
+
+However, you can use your own plink formatted .*bed*, .*fam*, .*bim* set
+ If you are analyzing more than one population, you will have to provide an additional file `sample_data.txt` specifying which population does each samples belong to.
+ Header should be as follows: \
+ **IID** ID of the sample as it is in the plink IID or in the VCF
+ **POPULATION** It can be any name or number to differentiate the different populations. e.g. in my data it coprresponds to the country of origin
+
+R is expecting a tab delimited file. If your file is delimited by spaces you can fix it with the following bash command `sed -i 's/ /\t/g'  sample_data.txt`
+
+
+#### Software:
+-[R](https://www.r-project.org/) or [RStudio](https://posit.co/download/rstudio-desktop/)\
+-[plink](https://www.cog-genomics.org/plink2/)\
+-[king](https://www.kingrelatedness.com/) \
+-[ADMIXTURE](https://dalexander.github.io/admixture/download.html) \
+Alexander, David H., and Kenneth Lange. "Enhancements to the ADMIXTURE algorithm for individual ancestry estimation." BMC bioinformatics 12 (2011): 1-6.\
+-[pong](https://github.com/ramachandran-lab/pong) \
+Aaron A. Behr and others, pong: fast analysis and visualization of latent clusters in population genetic data, Bioinformatics, Volume 32, Issue 18, September 2016, Pages 2817–2823
+
+
+#### Environment 
+
+This script is designed to be run as an [R markdown](https://rmarkdown.rstudio.com/lesson-1.html) file in R Studio. \
+This way you can run it in a step-by-step mode. You could also run it directly from the r command line if you already have a dataset of unrelated individuals and a dataframe specifying which population they belong to. 
+```         
+library(rmarkdown)
+render("path/to/your/file.Rmd")
+```
+
+Specify your prefix and the path for your working directory and required software in the following chunk:
+```{r environment-setup}
+if (!require("knitr", quietly = TRUE))
+install.packages("knitr")
+library(knitr)
+
+# Set your working directory:
+## Edit 'root.dir' and 'setwd' with the path to your working directory
+knitr::opts_chunk$set(root.dir = "~/Documents/Kosik Lab/ReD-Lat/admixture/",
+                      dev = "png",
+                      dpi = 300,
+                      echo = FALSE,
+                      cache = TRUE)
+setwd("~/Documents/Kosik Lab/ReD-Lat/admixture/")
+
+# Set up path to software:
+## Give the paths to plink, king
+Sys.setenv(plink='/home/acostauribe/bin/plink')
+Sys.setenv(king='/home/acostauribe/bin/king')
+Sys.setenv(admixture='/home/acostauribe/bin/admixture')
+Sys.setenv(pong='/home/acostauribe/anaconda3/bin/pong')
+
+# Give the name of your starting file without the .bed or .vcf.gz extension
+prefix='redlat-array.qc'
+Sys.setenv(prefix=prefix)
+
+# Gibe the additional information on your individuals as a text file ej. 
+sample_data ='sample_data.txt'
+
+#Set a color palette that is unambiguous both to colorblinds and non-colorblinds
+col_palette = c( '#4477AA', '#EE6677', '#228833', '#CCBB44', '#66CCEE', '#AA3377', '#BBBBBB')
+```
+
+
+### Principal Component Analysis
+
+**1. Get a set of unrelated Samples** 
+
+We will use King to output a set of unrelated individuals from our cohort.
+This will create a list of unrelated individuals (prefix.king.unrelated.txt) that you can extract from using plink
+```{bash get-unrelated, eval=FALSE, include=FALSE}
+$king -b $prefix.bed --unrelated --prefix $prefix.king.
+$plink --bfile $prefix --keep $prefix.king.unrelated.txt --make-bed --out $prefix.unr
+```
+
+**2. Retain variants with Minor Allelic Frequency > 10%**
+```{bash filter-maf, eval=FALSE, include=FALSE}
+$plink --bfile $prefix.unr --maf 0.10 --make-bed --out $prefix.unr.maf
+```
+
+**3. Filter for Linkage Disequilibrium and retain independent markers**
+
+Plink uses a *sliding window* approach to identify variants in linkage disequilibrium. There are many options to modify the behavior or this approach in [plink's docummentation](https://www.cog-genomics.org/plink/1.9/ld#indep). The LD pruning requires that the *.bim* file has variant IDs in the second column. If no variants have been assigned, you could do a preliminary step using [--set-missing-var-ids](https://www.cog-genomics.org/plink/1.9/data#set_missing_var_ids).
+
+For LD pruning we will use the following:
+--indep-pairwise <window size>['kb'] <step size (variant ct)> <r^2 threshold>
+
+```{bash filter-ld, eval=FALSE, include=FALSE}
+# Identify variants in LD
+$plink --bfile $prefix.unr.maf --indep-pairwise 50 10 0.2 
+
+# Retain independent variants
+$plink --bfile $prefix.unr.maf --extract plink.prune.in --make-bed --out $prefix.unr.maf.ld
+```
+
+**4. Perform a PCA using Plink**
+
+After the LD pruning we should have a dataset for > 100.000 variants to identify population structure.
+Plink  calculate the eigenvectors and eigenvalues using the methods . Eigenvectors are written to prefix.unr.maf.ld.pca.eigenvec, and top eigenvalues are written to prefix.unr.maf.ld.pca.eigenval. The eigenvectors represent the directions or components in the original variable space, while the eigenvalues quantify the amount of variance explained by each eigenvector.
+The 'header' modifier adds a header line to the .eigenvec file(s), and the 'tabs' modifier makes the .eigenvec file(s) tab- instead of space-delimited.
+
+NOte that plink uses the PCA algorithm from [GCTA](https://yanglab.westlake.edu.cn/software/gcta/#PCA)
+```{bash pca, eval=FALSE, include=FALSE}
+$plink --bfile $prefix.unr.maf.ld --pca header tabs --out $prefix.unr.maf.ld.pca
+```
+
+**Plot the PCA**
+
+We will use ggplot2 to get a beautiful PCA plot
+Plink's `prefix.unr.maf.ld.pca.eigenvec.eigenvec` contains the ei
+
+Load the dataframe we are going to plot: \
+Notice that in our  previous command we determined the output to be separates with tab '\t', and to have a header
+```{r load-eigendata}
+eigenvec = read.delim(paste0(prefix,".unr.maf.ld.pca.eigenvec"), sep='\t', header=TRUE)
+eigenval = read.delim(paste0(prefix,".unr.maf.ld.pca.eigenval"), sep='\t', header=FALSE)
+```
+
+We also need to add the correspondent country or site that each individual belongs to. For the data we will use the `sample_data.txt` dataframe. Using the `match` function, we will create a new column in 'eigenvec'.
+```{r load-sample-data}
+sample_data = read.delim(sample_data, header = TRUE )
+eigenvec$POPULATION = sample_data$POPULATION[match(eigenvec$IID, sample_data$IID)]
+```
+
+Plot 
+```{r pca-scatter-plots}
+if (!require("ggplot2", quietly = TRUE))
+install.packages("ggplot2")
+library(ggplot2)
+
+# Perform Scatter plots of main PCs
+ggplot(eigenvec, aes(x=PC1, y=PC2, color=POPULATION)) + 
+        geom_point( size=0.8, alpha=0.7) +
+        theme_linedraw() + 
+        guides(color = guide_legend(override.aes = list(size = 5))) +
+        scale_fill_manual(values=col_palette) +
+        scale_colour_manual(name=NULL, values=col_palette) +
+        labs(title="Principal Component Analysis PC1 vs PC2", 
+            caption="Array Batch 4 July 2023", fill = "Country")
+
+ggplot(eigenvec, aes(x=PC2, y=PC3, color=POPULATION)) + 
+        geom_point( size=0.8, alpha=0.7) +
+        theme_linedraw() + 
+        guides(color = guide_legend(override.aes = list(size = 5))) +
+        scale_fill_manual(values=col_palette) +
+        scale_colour_manual(name=NULL, values=col_palette) +
+        labs(title="Principal Component Analysis PC2 vs PC3", 
+            caption="Array Batch 4 July 2023")
+
+ggplot(eigenvec, aes(x=PC1, y=PC3, color=POPULATION)) + 
+        geom_point( size=0.8, alpha=0.7) +
+        theme_linedraw() + 
+        guides(color = guide_legend(override.aes = list(size = 5))) +
+        scale_fill_manual(values=col_palette) +
+        scale_colour_manual(name=NULL, values=col_palette) +
+        labs(title="Principal Component Analysis PC1 vs PC3", 
+            caption="Array Batch 4 July 2023")
+```
+
+
+Perform violin plot of each country vs top Principal Components
+
+```{r pcs-according-population}
+theme_2 = theme(panel.background = element_rect(fill=NA),
+             legend.position="none",   
+             panel.border=element_rect(fill=NA),
+             plot.title = element_text(hjust = 0.5),
+             axis.title.x = element_blank())
+
+ggplot(eigenvec, 
+       aes(x=POPULATION, y=PC1, color=POPULATION, fill=POPULATION, alpha=0.9)) + 
+       geom_violin(trim=FALSE) +
+       geom_boxplot(width=0.1, color = "black", cex = 0.5, outlier.size=0.5) +
+       theme_2   + 
+       scale_colour_manual(values=col_palette) +
+       scale_fill_manual(values=col_palette) +
+       labs(title="RedLat PC1 according to country",
+            caption="Array Batch 4 July 2023")
+
+ggplot(eigenvec, 
+       aes(x=POPULATION, y=PC2, color=POPULATION, fill=POPULATION, alpha=0.9)) + 
+       geom_violin(trim=FALSE) +
+       geom_boxplot(width=0.1, color = "black", cex = 0.5, outlier.size=0.5) +
+       theme_2   + 
+       scale_colour_manual(values=col_palette) +
+       scale_fill_manual(values=col_palette) +
+       labs(title="RedLat PC2 according to country",
+            caption="Array Batch 4 July 2023")
+
+ggplot(eigenvec, 
+       aes(x=POPULATION, y=PC3, color=POPULATION, fill=POPULATION, alpha=0.9)) + 
+       geom_violin(trim=FALSE) +
+       geom_boxplot(width=0.1, color = "black", cex = 0.5, outlier.size=0.5) +
+       theme_2   + 
+       scale_colour_manual(values=col_palette) +
+       scale_fill_manual(values=col_palette) +
+       labs(title="RedLat PC3 according to country",
+            caption="Array Batch 4 July 2023")
+
+ggplot(eigenvec, 
+       aes(x=POPULATION, y=PC4, color=POPULATION, fill=POPULATION, alpha=0.9)) + 
+       geom_violin(trim=FALSE) +
+       geom_boxplot(width=0.1, color = "black", cex = 0.5, outlier.size=0.5) +
+       theme_2   + 
+       scale_colour_manual(values=col_palette) +
+       scale_fill_manual(values=col_palette) +
+       labs(title="RedLat PC4 according to country",
+            caption="Array Batch 4 July 2023")
+```
+
+
+Perform a Scree plot to check the explained variance
+```{r variance-expained-pc}
+#Edit the eigenvalues and add the corresponded PC to each value
+colnames(eigenval) = "values"
+eigenval$PC = 1:nrow(eigenval)
+
+# Sum all eigenvalues
+total_sum = sum(eigenval$values)
+
+# Identify the proportion explianed by each PC
+eigenval$proportions = (eigenval$values / total_sum) * 100
+
+ggplot(eigenval, 
+       aes(x=PC, y=proportions, color='4477AA', fill='4477AA' )) + 
+       geom_bar(stat="identity") +
+       theme_2 + 
+        scale_fill_manual(values=col_palette) +
+        scale_colour_manual(values=col_palette) +
+        scale_x_continuous(name="Principal Component", breaks=seq(1,20,1)) +
+        scale_y_continuous(name="Variance explained (%)") +
+        labs(title="Percentage of variance explained by each PC", 
+            caption="Array Batch 4 July 2023")
+```
+
+## ADMIXTURE Analysis
+
+
+Unsupervised mode
+```{bash run-admixture}
+# Choose number of iterations you want to do
+declare -i iterations=20
+declare -i k_model=10
+
+for i in $(seq 1 $iterations)
+do
+        echo "Starting" Iteration_${i}
+  	mkdir Iteration_${i}
+        for k in $(seq 1 $k_model) # choose number of ancestral populations (K) you want to model
+        do
+                echo "Starting K of " ${k}
+                $admixture -j4 $prefix.unr.maf.ld.bed --cv ${k} -s time | tee $prefix.unr.maf.ld.K${k}.I${i}.log
+                #creates $prefix.unr.maf.ld.${k}.P, $PREFIX.unr.maf.ld.${k}.Q and $prefix.unr.maf.ld.K${k}.I${i}.log
+                
+                mv $prefix.unr.maf.ld.K${k}.* ./Iteration_${i}
+                mv *.P ./Iteration_${i}
+                mv *.Q ./Iteration_${i}
+                echo "Finished K of " ${k}
+        done
+        echo "Finished" Iteration_${i}
+done
+```
+Each run of admixture will create the following files:
+- *prefix.unr.maf.ld.{k}.P* each line is a variant
+- *prefix.unr.maf.ld.{k}.Q *
+- *prefix.unr.maf.ld.K{k}.I{i}.log*
+
+
+**Get the Cross Validation (CV) error from each run**
+
+We can use a bash function called 'grep' to create a single file with all the CV errors from the .log files
+```{bash cv-error, eval=FALSE, include=FALSE}
+declare -i iterations=20
+declare -i k_model=10
+
+for i in $(seq 1 $iterations)
+do
+        echo "Starting" Iteration_${i}
+        for k in $(seq 1 $k_model) # choose number of ancestral populations (K) you want to model
+        do
+                echo "Starting K of " ${k}
+                grep "CV error" ./Iteration_${i}/$prefix.unr.maf.ld.K${k}.I${i}.log >> $prefix.CVerror.txt
+        done
+done
+```
+
+We can use a bash function called 'sed' to edit $prefix.CVerror.txt.
+``sed -i 's/STRING_TO_REPLACE/STRING_TO_REPLACE_IT/g' filename``
+
+```{bash edit-cv-error}
+sed -i 's/CV error (K=//g' $prefix.CVerror.txt > o
+sed -i 's/)://g' $prefix.CVerror.txt
+```
+
+**Plot the CV errors for each K**
+
+```{r plot-cv-error}
+if (!require("ggplot2", quietly = TRUE))
+install.packages("ggplot2")
+library(ggplot2)
+
+# Import data
+admixture_data = read.delim(paste0(prefix,".CVerror.txt"), header =F, sep="\t")
+
+# Add Column names
+colnames(admixture_data) = c("K", "CV.error")
+
+# Get the mean of each CV error per K
+mean_cv = aggregate(admixture_data, list(admixture_data$K), mean)
+
+# Plot with Base R
+plot(admixture_data$K, 
+     admixture_data$CV.error, 
+     pch = 16, 
+     col = "blue", 
+     xlab = "Ancestral populations (K)", 
+     ylab = "CV error",
+     main = "Cross Validation Error")
+# Add mean lines
+lines(mean_cv$K, mean_cv$CV.error, col = "red", lty = "dashed")
+
+
+# You can do the same plot with ggplot2
+
+ggplot(admixture_data, aes(x = K, y = CV.error)) +
+  geom_point(shape = 16, color = "blue", alpha = 0.3) +
+  xlab("Ancestral populations (K)") +
+  ylab("CV error") +
+  ggtitle("Cross Validation Error") +
+  theme_bw() +
+  geom_line(data = mean_cv, aes(x = K, y = CV.error), color = "red", linetype = "dashed") +
+  scale_x_discrete(limits=c(seq(1:10)))
+ggsave(filename = "cverror.png",
+       width = 6, height = 4, dpi = 300)
+
+```
+
+
+**Plot your ADMIXTURE results using pong**
+
+You can use base R or ggplot to plot your ADMIXTURE results, but i recommend a software called pong. \
+Pong installation will not be covered by this tutorial. More information on the Ramachandran Lab [GitHub page](https://github.com/ramachandran-lab/pong)
+
+pong accepts clustering output files, or Q matrices, from a variety of clustering inference programs, including ADMIXTURE
+
+These are the arguments we will be using for our plot:
+``-m FILEMAP, --filemap FILEMAP``
+
+A FILEMAP is a three-column, tab-delimited file. Each line contains the following information about a single Q matrix:
+
+- A unique ID (e.g. iter5_K=7; this must contain at least one letter, and cannot contain a hashmark/hashtag or a period. Integers, spaces, and other special characters are accepted.)
+- The K value
+- The Q matrix file path, relative to the filemap. Thus, if the filemap is in the same directory as the Q matrix files, this is just the name of the Q matrix file.
+
+It is important that the columns of your filemap are in the right order and that the file is tab-delimited. Use the filemap provided with the example dataset for reference. U
+
+example:
+```
+I1_K2	2	/Iteration_1/1000G.toy.unr.maf.ld.2.Q
+I1_K3	3	/Iteration_1/1000G.toy.unr.maf.ld.3.Q
+I2_K2	2	/Iteration_2/1000G.toy.unr.maf.ld.2.Q
+I2_K3	3	/Iteration_2/1000G.toy.unr.maf.ld.3.Q
+I3_K2	2	/Iteration_3/1000G.toy.unr.maf.ld.2.Q
+I3_K3	3	/Iteration_3/1000G.toy.unr.maf.ld.3.Q
+```
+
+You can generate your filemap using this bash script
+```{bash filemap}
+declare -i iterations=20
+declare -i k_model=10
+
+for i in $(seq 1 $iterations)
+do
+        for k in $(seq 2 $k_model) # choose number of ancestral populations (K) you want to model
+        do
+                echo -e "I"$i"_K"$k"\t"$k"\t./Iteration_"${i}"/"$prefix".unr.maf.ld."$k".Q" >> filemap.txt
+        done
+done
+```
+
+
+``-i IND2POP, --ind2pop IND2POP`` \
+ind2pop data (can be either a Q-matrix column number or the path to a file containing the data).
+
+Each line of the Q matrix file represents one individual, and it has the same order as the .fam file.
+Each row is the population that the corresponding individual belongs to.
+                        
+``-n POP_NAMES, --pop_names POP_NAMES`` \
+Path to file containing population order/names.
+
+**Make the IND2POP file**
+
+Load your fam and use the sample_data to get the population that each individual belongs to
+```{r load-famdata}
+fam = read.delim(paste0(prefix,".unr.maf.ld.fam"), sep=' ', header=FALSE)
+fam$V7 = sample_data$POPULATION[match(fam$V2, sample_data$IID)]
+
+# Get the populations in the same order
+ind2pop = fam$V7 
+
+write.table(ind2pop,
+            "ind2pop.txt", 
+            col.names = FALSE, 
+            row.names = FALSE, 
+            quote = FALSE)
+```
+
+**Make the POP_NAMES file**
+Get all the unique population values and sort them alphabetically
+
+```{r pop-names}
+pop_names = sort(unique(ind2pop))
+write.table(pop_names,
+            "pop_names.txt", 
+            col.names = FALSE, 
+            row.names = FALSE, 
+            quote = FALSE)
+```
+
+Use pong to plot
+
+```{bash pong, eval=FALSE, include=FALSE}
+$pong --filemap filemap.txt --ind2pop ind2pop.txt --pop_names pop_names.txt  --verbose
+```
+
+

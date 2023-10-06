@@ -1,0 +1,242 @@
+---
+title: "Zygosity mapping"
+author: "Juliana Acosta-Uribe"
+date: '2023-06-23'
+---
+
+```{r environment-setup, include=FALSE}
+#install.packages("ggplot2")
+library(ggplot2)
+#install.packages("dplyr")
+library(dplyr)
+#install.packages("kinship2")
+library(kinship2)
+#install.packages("tidyverse")
+library(tidyverse)
+Sys.setenv(plink='/home/acostauribe/bin/plink')
+Sys.setenv(king='/home/acostauribe/bin/king')
+Sys.setenv(vcftools='/usr/bin/vcftools')
+Sys.setenv(bcftools='/usr/bin/bcftools')
+
+# Set up working directory and variables
+setwd("~/TANGL/Family-17714")
+prefix='F-17714.2'
+Sys.setenv(prefix=prefix)
+affected=4 #Specify the number of affected individuals in your plink files
+Sys.setenv(affected=affected)
+unaffected=0  #Specify the number of unaffected individuals in your plink files
+Sys.setenv(unaffected=unaffected)
+```
+
+**PART ONE: PERFORM ZYGOSITY TESTING FOR DOMINANT AND RECESSIVE MODELS USING PLINK**
+
+1. Generate the .model file
+```{bash}
+$plink --bfile $prefix --chr 1-22 --model --out $prefix.zyg
+# for running this command individuals cannot have paternal or maternal ID on the .fam.
+```
+
+2. Identify variants that match the dominant zygosity
+```{bash}
+awk -v affected="$affected/0" -v unaffected="0/$unaffected" '{ if (($5 =="DOM") && (($6 == affected) && ($7 == unaffected))) {print $2} }' $prefix.zyg.model > $prefix.zyg.dominant.vars
+
+# Extract variants that match the dominant zygosity
+$plink --bfile $prefix --extract  $prefix.zyg.dominant.vars --make-bed --out $prefix.zyg.dominant.vars
+
+# Get coordinates for plotting
+awk '{print $1, $4}' $prefix.zyg.dominant.vars.bim > $prefix.zyg.dominant.vars.coordinates
+```
+
+Plot DOMINANT zygosity
+```{r}
+# load the chromosome coordinates taken from https://www.ncbi.nlm.nih.gov/grc/human/data?asm=GRCh37.p13 # Notice I only have autosomes
+chr_coordinates = read.table("chromosomes.bed", header=T) 
+colnames(chr_coordinates) = c('CHR','START','END',"ID")
+
+# Plot DOMINANT zygosity
+dom.vars = read.table(paste0(prefix,".zyg.dominant.vars.coordinates"), header=F)
+# add column names to the variants. the column names in both datasets need to match
+colnames(dom.vars) = c('CHR','END')
+# Plot
+ggplot(chr_coordinates, aes(x=END, y=reorder(CHR, CHR))) +
+  geom_bar(stat="identity", fill="#f68060", alpha=.6, width=.4) +
+  theme_bw() +
+  geom_point(data=dom.vars, shape="|", size=2) +
+  labs(title="Dominant Zygosity Mapping", 
+     x="Position",
+     y="Chromosome")
+```
+
+
+3. Identify variants that match the recessive zygosity
+```{bash}
+awk -v affected="$affected/0" -v unaffected="0/$unaffected" '{if (($5 =="REC") && (($6 == affected) && ($7 == unaffected))) {print $2}}' $prefix.zyg.model > $prefix.zyg.recessive.vars
+
+# Extract variants that match the recessive zygosity
+$plink --bfile $prefix --extract  $prefix.zyg.recessive.vars --make-bed --out $prefix.zyg.recessive.vars
+
+# Get coordinates for plotting
+awk '{print $1, $4}' $prefix.zyg.recessive.vars.bim > $prefix.zyg.recessive.vars.coordinates
+```
+
+Plot RECESSIVE zygosity
+```{r}
+rec.vars = read.table(paste0(prefix,".zyg.recessive.vars.coordinates"), header=F)
+# add column names to the variants. the column names in both datasets need to match
+colnames(rec.vars) = c('CHR','END')
+# Plot
+ggplot(chr_coordinates, aes(x=END, y=reorder(CHR, CHR))) +
+  geom_bar(stat="identity", fill="#69b3a2", alpha=.6, width=.4) +
+  theme_bw() +
+  geom_point(data=rec.vars, shape="|", size=2) +
+  labs(title="Recessive Zygosity Mapping", 
+     x="Position",
+     y="Chromosome")
+```
+
+
+**PART TWO: ANNOTATION OF THE VCF**
+
+1. Extract target regions from vcf file 
+```{bash}
+for i in dominant recessive 
+  do
+  $plink --bfile $prefix.zyg.${i}.vars --recode vcf-iid --out $prefix.zyg.${i}.vars.panel
+  bgzip $prefix.zyg.${i}.vars.panel.vcf
+  tabix -p vcf $prefix.zyg.${i}.vars.panel.vcf.gz
+done
+```
+
+2. Use ANNOVAR to annotate the vcf. [expects vcf aligned to hg38]
+
+```{bash}  
+# Specify annovar executable and database
+annovar_perl="~/bin/table_annovar.pl" #annovar executable file
+annovar_database_PATH='/home/acostauribe/bin/annovar/humandb/' #annovar humandb database
+
+for i in dominant recessive 
+  do
+  echo "Using ANNOVAR to annotate " $prefix.zyg.${i}.vars.panel.vcf.gz 
+  $annovar_perl $prefix.zyg.${i}.vars.panel.vcf.gz ${annovar_database_PATH} --buildver hg38 --outfile $prefix.zyg.${i}.vars.panel --protocol refGene,ensGene,exac03,gnomad30_genome,ALL.sites.2015_08,AFR.sites.2015_08,EUR.sites.2015_08,EAS.sites.2015_08,SAS.sites.2015_08,AMR.sites.2015_08,avsnp150,clinvar_20220320,dbnsfp33a,dbscsnv11,revel --operation g,g,f,f,f,f,f,f,f,f,f,f,f,f,f --nastring . --vcfinput --remove 
+  #This command will generate $prefix.zyg.${i}.vars.panel.hg38_multianno
+  
+  annovar_file=$prefix.zyg.${i}.vars.panel.hg38_multianno
+  echo "annovar_file is now" ${annovar_file}
+
+  ### Edit the ANNOVAR results header 
+  echo "Editing ANNOVAR header" 
+  
+  ### Get the sample IDs from the vcf
+  grep '#CHROM' ${annovar_file}.vcf > ${annovar_file}.chrom_line
+  head -1 ${annovar_file}.txt > ${annovar_file}.header
+  sed -i 's/ /\t/g' ${annovar_file}.header
+  cut -f -120 ${annovar_file}.header > ${annovar_file}.header_120
+  paste ${annovar_file}.header_120 ${annovar_file}.chrom_line > ${annovar_file}.header_new
+  
+  ### Edit values in ANNOVAR column IDs to make it more user friendly
+  awk -v OFS='\t' '{sub("AF","GnomAD_v3_all",$24);print}' ${annovar_file}.header_new > temp
+  mv temp ${annovar_file}.header_new 
+  sed -i 's/AF_raw/GnomAD_v3_raw/g' ${annovar_file}.header_new
+  sed -i 's/AF_male/GnomAD_v3_Male/g' ${annovar_file}.header_new
+  sed -i 's/AF_female/GnomAD_v3_Female/g' ${annovar_file}.header_new
+  sed -i 's/AF_afr/GnomAD_v3_African/g' ${annovar_file}.header_new
+  sed -i 's/AF_ami/GnomAD_v3_Amish/g' ${annovar_file}.header_new
+  sed -i 's/AF_amr/GnomAD_v3_American/g' ${annovar_file}.header_new
+  sed -i 's/AF_asj/GnomAD_v3_Ashkenazi/g' ${annovar_file}.header_new
+  sed -i 's/AF_eas/GnomAD_v3_EastAsian/g' ${annovar_file}.header_new
+  sed -i 's/AF_fin/GnomAD_v3_Finnish/g' ${annovar_file}.header_new
+  sed -i 's/AF_nfe/GnomAD_v3_European/g' ${annovar_file}.header_new
+  sed -i 's/AF_oth/GnomAD_v3_Other/g' ${annovar_file}.header_new
+  sed -i 's/AF_sas/GnomAD_v3_SouthAsian/g' ${annovar_file}.header_new
+  sed -i 's/ALL.sites.2015_08/1000GP_2015_All/g' ${annovar_file}.header_new
+  sed -i 's/AFR.sites.2015_08/1000GP_2015_African/g' ${annovar_file}.header_new
+  sed -i 's/EUR.sites.2015_08/1000GP_2015_European/g' ${annovar_file}.header_new
+  sed -i 's/EAS.sites.2015_08/1000GP_2015_EastAsian/g' ${annovar_file}.header_new
+  sed -i 's/SAS.sites.2015_08/1000GP_2015_SouthAsian/g' ${annovar_file}.header_new
+  sed -i 's/AMR.sites.2015_08/1000GP_2015_American/g' ${annovar_file}.header_new
+  sed -i 's/CLNALLELEID/ClinVar_AlleleID/g' ${annovar_file}.header_new
+  sed -i 's/CLNDN/ClinVar_Disease/g' ${annovar_file}.header_new
+  sed -i 's/CLNDISDB/ClinVar_DiseaseDatabase/g' ${annovar_file}.header_new
+  sed -i 's/CLNREVSTAT/ClinVar_ReviewStatus/g' ${annovar_file}.header_new
+  sed -i 's/CLNSIG/ClinVar_Significance/g' ${annovar_file}.header_new
+  
+  ### Paste edited header with annotations
+  sed '1d' ${annovar_file}.txt > ${annovar_file}.header_removed
+  cat ${annovar_file}.header_new ${annovar_file}.header_removed > ${annovar_file}.txt
+  
+  ### Count number of columns
+  #head -1 ${annovar_file}.txt | awk -F'\t' '{print NF}' 
+  ## Count number of variants
+  echo "Number of variants in " ${annovar_file}.txt
+  wc -l ${annovar_file}.txt | awk '{print $1-1}' #the awk command substracts the line of the header
+done
+```
+
+
+**PART THREE: FILTER ANNOTATED FILES**
+
+Here are a series of awk commands that can be used to filter variants of potential interest:
+
+Get Exonic and Splicing variants. 
+```{bash}
+awk -v OFS='\t' 'NR==1; NR > 1{ if(($6 == "exonic") || ($6 == "exonic;splicing") || ($6 == "splicing")) { print } }' ${annovar_file}.txt > ${annovar_file}.exonic.txt
+echo "Number of variants in" ${annovar_file}.exonic.txt
+wc -l ${annovar_file}.exonic.txt | awk '{print $1-1}'
+```
+
+Exclude synonymous mutations
+```{bash}
+awk -v OFS='\t' 'NR==1; NR > 1{ if(($9 != "synonymous SNV") && ($6 != "unknown")) { print } }' ${annovar_file}.exonic.txt > ${annovar_file}.exonic.non-syn.txt
+echo "Number of variants in" ${annovar_file}.exonic.non-syn.txt
+wc -l ${annovar_file}.exonic.non-syn.txt | awk '{print $1-1}'
+```
+
+Extract variants in the top 25 genes of neurodegeneration
+```{bash}
+awk -v OFS='\t' 'NR==1; NR > 1{ if(($7=="CHCHD10") || ($7=="CHMP2B") || ($7=="CSF1R") || ($7=="FUS") || ($7=="GRN") || ($7=="HNRNPA1") || ($7=="HNRNPA2B1") || ($7=="LRRK2") || ($7=="OPTN") || ($7=="PRNP") || ($7=="SNCA") || ($7=="SQSTM1") || ($7=="TARDBP") || ($7=="UBQLN2") || ($7=="VCP") || ($7=="ABCA7") || ($7=="APOE") || ($7=="APP") || ($7=="MAPT") || ($7=="PSEN1") || ($7=="PSEN2") || ($7=="SORL1") || ($7=="TBK1") || ($7=="TREM2") || ($7=="APOE")) { print } }' ${annovar_file}.exonic.non-syn.txt > ${annovar_file}.exonic.non-syn.top25.txt
+echo "Number of variants in" ${annovar_file}.exonic.non-syn.top25.txt
+wc -l ${annovar_file}.exonic.non-syn.top25.txt | awk '{print $1-1}'
+```
+
+Extract variants in the top 10 genes of neurodegeneration
+```{bash}
+awk -v OFS='\t' 'NR==1; NR > 1{ if(($7=="FUS") || ($7=="GRN") || ($7=="TARDBP") || ($7=="VCP") || ($7=="APOE") || ($7=="APP") || ($7=="MAPT") || ($7=="PSEN1") || ($7=="PSEN2") || ($7=="TBK1")) { print } }' ${annovar_file}.exonic.non-syn.txt > ${annovar_file}.exonic.non-syn.top10.txt
+echo "Number of variants in" ${annovar_file}.exonic.non-syn.top10.txt
+wc -l ${annovar_file}.exonic.non-syn.top10.txt | awk '{print $1-1}'
+```
+
+### Extract variants that have been reported as "Pathogenic" or "Likely pathogenic" in ClinVar
+```{bash}
+grep 'athogenic' ${annovar_file}.exonic.non-syn.txt | grep -v 'Conflicting'> clinvar_pathogenic
+cat ${annovar_file}.header_new clinvar_pathogenic > ${annovar_file}.exonic.non-syn.ClinVar-Pathogenic.txt
+echo "Number of variants in " ${annovar_file}.exonic.non-syn.ClinVar-Pathogenic.txt
+wc -l ${annovar_file}.exonic.non-syn.ClinVar-Pathogenic.txt | awk '{print $1-1}'
+```
+
+Extract variants with low minor allelic frequency (MAF) and high CADD score
+```{bash}
+# MAF and CADD thresholds need to be defined inside the awk command
+# If the value is a '.' or a blank, it will be printed out as well. when a '<=0' statement is present
+# Columns are 16=MAF in ExAC_all, 25=MAF in 1000GP_all, 74=CADD_phred
+awk -v OFS='\t' -v MAF='0.001' -v CADD='20' 'NR==1; NR > 1{ if(($16 <= MAF) && ($25 <= MAF) && ($74 >= CADD || $74<=0)) {print}}' ${annovar_file}.exonic.non-syn.txt > ${annovar_file}.exonic.non-syn.manual-curation.txt
+echo "Number of variants in " ${annovar_file}.exonic.non-syn.manual-curation.txt
+wc -l ${annovar_file}.exonic.non-syn.manual-curation.txt | awk '{print $1-1}'
+```
+
+
+Tidy up!
+
+```{bash}
+### Delete what we don't need
+rm ${vcf_file}.avinput
+rm ${annovar_file}.header*
+rm ${annovar_file}.chrom_line
+rm clinvar_pathogenic
+
+# Store annonations in their own directory
+echo "Creating a directory for annotations"
+mkdir ANNOVAR
+mv ${annovar_file}.* ./ANNOVAR
+mv filter_variants.* ./ANNOVAR
+mv ANNOVAR ANNOVAR_$(date "+%Y%m%d")
+```

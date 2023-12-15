@@ -15,7 +15,7 @@ However, you can use your own plink formatted .*bed*, .*fam*, .*bim* set
  If you are analyzing more than one population, you will have to provide an additional file `sample_data.txt` specifying which population does each samples belong to.
  Header should be as follows: \
  **IID** ID of the sample as it is in the plink IID or in the VCF
- **POPULATION** It can be any name or number to differentiate the different populations. e.g. in my data it coprresponds to the country of origin
+ **cluster_column** It can be any name or number to differentiate the different populations. e.g. in my data it coprresponds to the country of origin
 
 R is expecting a tab delimited file. If your file is delimited by spaces you can fix it with the following bash command `sed -i 's/ /\t/g'  sample_data.txt`
 
@@ -28,6 +28,8 @@ R is expecting a tab delimited file. If your file is delimited by spaces you can
 Alexander, David H., and Kenneth Lange. "Enhancements to the ADMIXTURE algorithm for individual ancestry estimation." BMC bioinformatics 12 (2011): 1-6.\
 -[pong](https://github.com/ramachandran-lab/pong) \
 Aaron A. Behr and others, pong: fast analysis and visualization of latent clusters in population genetic data, Bioinformatics, Volume 32, Issue 18, September 2016, Pages 2817–2823
+-[EIGENSOFT](https://github.com/DReichLab/EIG) \
+Patterson et al. 2006 PLoS Genet 2:e190 (population structure)
 
 
 #### Environment 
@@ -47,12 +49,13 @@ library(knitr)
 
 # Set your working directory:
 ## Edit 'root.dir' and 'setwd' with the path to your working directory
-knitr::opts_chunk$set(root.dir = "~/Genetic-Sequencing_raw-data/HudsonAlpha_J.Nicholas.Cochran/redlat/array",
+knitr::opts_chunk$set(root.dir = "~/Redlat/PCA",
                       dev = "png",
                       dpi = 300,
                       echo = FALSE,
                       cache = TRUE)
-setwd("~/Genetic-Sequencing_raw-data/HudsonAlpha_J.Nicholas.Cochran/redlat/array")
+setwd("~/Redlat/PCA")
+date = Sys.Date() # gets the current date
 
 # Set up path to software:
 ## Give the paths to plink, king
@@ -60,13 +63,15 @@ Sys.setenv(plink='/home/acostauribe/bin/plink')
 Sys.setenv(king='/home/acostauribe/bin/king')
 Sys.setenv(admixture='/home/acostauribe/bin/admixture')
 Sys.setenv(pong='/home/acostauribe/anaconda3/bin/pong')
+Sys.setenv(smartpca='/home/acostauribe/bin/EIG-8.0.0/bin/smartpca.perl')
 
 # Give the name of your starting file without the .bed or .vcf.gz extension
-prefix='redlat-array.qc.n100'
+prefix='redlat_merge.id.kin.concordant'
 Sys.setenv(prefix=prefix)
 
 #Set a color palette that is unambiguous both to colorblinds and non-colorblinds
-col_palette = c( '#4477AA', '#EE6677', '#228833', '#CCBB44', '#66CCEE', '#AA3377', '#BBBBBB')
+col_palette = c( '#4477AA', '#EE6677', '#228833', '#CCBB44', '#66CCEE', '#A9A9A9', '#AA3377')
+
 ```
 
 
@@ -82,9 +87,14 @@ $plink --bfile $prefix --keep $prefix.king.unrelated.txt --make-bed --out $prefi
 ```
 
 **2. Retain variants with Minor Allelic Frequency > 10%**
+
+If you have a balanced dataset, with similar number of individuals from each included population, you can filter your allelic frequency based on the markers in your dataset.
+
 ```{bash filter-maf, eval=FALSE, include=FALSE}
 $plink --bfile $prefix.unr --maf 0.10 --make-bed --out $prefix.unr.maf
 ```
+
+If your set is unbalanced, with a population outnumbering the other, I recommend to use population based allelic frequencies from a balanced study to filter your samples. For the ReDLat consortium data, we used the global allelic frequencies from the 1000 Genomes Project to annotate our data and then we retained variants with maf > 10% according to those values. 
 
 **3. Filter for Linkage Disequilibrium and retain independent markers**
 
@@ -101,33 +111,94 @@ $plink --bfile $prefix.unr.maf --indep-pairwise 50 10 0.2
 $plink --bfile $prefix.unr.maf --extract plink.prune.in --make-bed --out $prefix.unr.maf.ld
 ```
 
+After the LD pruning we should have a dataset for > 100.000 variants to identify population structure.
+
+
 **4. Perform a PCA using Plink**
 
-After the LD pruning we should have a dataset for > 100.000 variants to identify population structure.
-Plink  calculate the eigenvectors and eigenvalues using the methods . Eigenvectors are written to prefix.unr.maf.ld.pca.eigenvec, and top eigenvalues are written to prefix.unr.maf.ld.pca.eigenval. The eigenvectors represent the directions or components in the original variable space, while the eigenvalues quantify the amount of variance explained by each eigenvector.
-The 'header' modifier adds a header line to the .eigenvec file(s), and the 'tabs' modifier makes the .eigenvec file(s) tab- instead of space-delimited.
+Plink  calculate the eigenvectors and eigenvalues using the the PCA algorithm from [GCTA](https://yanglab.westlake.edu.cn/software/gcta/#PCA). 
 
-NOte that plink uses the PCA algorithm from [GCTA](https://yanglab.westlake.edu.cn/software/gcta/#PCA)
 ```{bash pca, eval=FALSE, include=FALSE}
-$plink --bfile $prefix.unr.maf.ld --pca header tabs --out $prefix.unr.maf.ld.pca
+$plink --bfile $prefix.unr.maf.ld --pca header tabs --out $prefix.pca
 ```
 
-**Plot the PCA**
+Eigenvectors are written to *prefix.unr.maf.ld.pca.eigenvec*, and top eigenvalues are written to *prefix.unr.maf.ld.pca.eigenval*. The eigenvectors represent the directions or components in the original variable space, while the eigenvalues quantify the amount of variance explained by each eigenvector.
+
+The 'header' modifier adds a header line to the .eigenvec file(s), and the 'tabs' modifier makes the .eigenvec file(s) tab- instead of space-delimited.
+
+**4. Perform a PCA using the EIGENSOFT package**
+
+`$smartpca` calls the smartpca program (EIG-8.0.0/POPGEN/README). For this to work, the bin directory containing
+smartpca MUST be in your path.
+
+smartpca ignores individuals in the .fam file if they are marked as missing in the phenotypes column. 
+
+The awk command provides a new .fam file that will automatically include all individuals.
+
+```{bash}
+awk '{print $1, $2, $3, $4, $5, 1}' $prefix.unr.maf.ld.fam > $prefix.unr.maf.ld.pca.fam
+
+perl $smartpca 
+-i $prefix.unr.maf.ld.bed     # genotype file 
+-a $prefix.unr.maf.ld.bim     # snp file
+-b $prefix.unr.maf.ld.pca.fam     # indiv file
+-e $prefix.pca.eval           # output file of all eigenvalues
+-o $prefix.pca                # output file of principal components                
+-l $prefix.smartpca.log       # output logfile  
+-p $prefix.pca.plot
+-m 0                          # dont remove outliers for the exploratory PCAls
+
+```
+
+`-m maxiter` (Default is 5) maximum number of outlier removal iterations. To turn off outlier removal, set -m 0. \
+`-t topk` (Default is 10) number of principal components along which to remove outliers during each outlier 
+removal iteration. \
+`-s sigma` (Default is 6.0) number of standard deviations which an individual must exceed, along one of top k top
+principal components, in order to be removed as an outlier. \
+
+Eigenvectors are written to *prefix.unr.maf.ld.pca.evec*, and top eigenvalues are written to *prefix.unr.maf.ld.pca.eval*. The eigenvectors represent the directions or components in the original variable space, while the eigenvalues quantify the amount of variance explained by each eigenvector.
+
+
+**5.Plot the PCA**
 
 We will use ggplot2 to get a beautiful PCA plot
 Plink's `prefix.unr.maf.ld.pca.eigenvec.eigenvec` contains the ei
 
 Load the dataframe we are going to plot: \
+
+If you used **plink** load using this chunk:
 Notice that in our  previous command we determined the output to be separates with tab '\t', and to have a header
-```{r load-eigendata}
-eigenvec = read.delim(paste0(prefix,".unr.maf.ld.pca.eigenvec"), sep='\t', header=TRUE)
-eigenval = read.delim(paste0(prefix,".unr.maf.ld.pca.eigenval"), sep='\t', header=FALSE)
+```{r load-plink, eval=FALSE, include=FALSE}
+# Import data
+eigenvec = read.delim(paste0(prefix,".pca.eigenvec"), sep='\t', header=TRUE)
+eigenval = read.delim(paste0(prefix,".pca.eigenval"), sep='\t', header=FALSE)
+```
+
+If you used **Eigensoft** load using this chunk:
+```{r load-eigensoft}
+if (!require("tidyr", quietly = TRUE))
+install.packages("tidyr")
+library(tidyr)
+
+# Import data
+eigenvec = read.delim(paste0(prefix,".pca.evec"), sep='', header=FALSE)
+eigenval = read.delim(paste0(prefix,".pca.eval"), header=FALSE)
+
+# Edit header
+eigenvec = eigenvec[-1, ] # Remove first line
+pc_names = paste0("PC", 1:(ncol(eigenvec) - 1)) # Count the number of columns
+names(eigenvec) =  c("FID:IID", pc_names) # rename columns
+eigenvec = separate(eigenvec, "FID:IID", into = c("FID", "IID"), sep = ":") # Separate the family and individual IDs
 ```
 
 We also need to add the correspondent country or site that each individual belongs to. For the data we will use the `sample_data.txt` dataframe. Using the `match` function, we will create a new column in 'eigenvec'.
+
 ```{r load-sample-data}
 lookup_dataframe = read.delim("sample_data.txt", header = TRUE )
-eigenvec$POPULATION = lookup_dataframe$POPULATION[match(eigenvec$IID, lookup_dataframe$IID)]
+
+# Determine which Column you want to use as comparison factor
+cluster_column = "country_birth"  # This can be any column name you want to use
+eigenvec[[cluster_column]] = lookup_dataframe[[cluster_column]][match(eigenvec$IID, lookup_dataframe$IID)]
 ```
 
 Plot 
@@ -136,33 +207,43 @@ if (!require("ggplot2", quietly = TRUE))
 install.packages("ggplot2")
 library(ggplot2)
 
+if (!require("rlang", quietly = TRUE))
+install.packages("rlang")
+library(rlang)
+
+prefix = paste0(prefix, ".", cluster_column)
+
 # Perform Scatter plots of main PCs
-ggplot(eigenvec, aes(x=PC1, y=PC2, color=POPULATION)) + 
+ggplot(eigenvec, aes(x=PC1, y=PC2, color=.data[[cluster_column]])) + 
         geom_point( size=0.8, alpha=0.7) +
         theme_linedraw() + 
         guides(color = guide_legend(override.aes = list(size = 5))) +
         scale_fill_manual(values=col_palette) +
         scale_colour_manual(name=NULL, values=col_palette) +
-        labs(title="Principal Component Analysis PC1 vs PC2", 
-            caption="sub-cohorts n=100", fill = "Country")
+        labs(title="Principal Component Analysis PC1 vs PC2",
+             caption=date)
+ggsave(paste0(prefix,".PC1-PC2.png"), width = 6, height = 5, dpi = 300)
 
-ggplot(eigenvec, aes(x=PC2, y=PC3, color=POPULATION)) + 
+ggplot(eigenvec, aes(x=PC2, y=PC3, color=.data[[cluster_column]])) + 
         geom_point( size=0.8, alpha=0.7) +
         theme_linedraw() + 
         guides(color = guide_legend(override.aes = list(size = 5))) +
         scale_fill_manual(values=col_palette) +
         scale_colour_manual(name=NULL, values=col_palette) +
-        labs(title="Principal Component Analysis PC2 vs PC3", 
-            caption="sub-cohorts n=100")
+        labs(title="Principal Component Analysis PC2 vs PC3",
+             caption=date)
+ggsave(paste0(prefix,".PC2-PC3.png"), width = 6, height = 5, dpi = 300)
 
-ggplot(eigenvec, aes(x=PC1, y=PC3, color=POPULATION)) + 
+ggplot(eigenvec, aes(x=PC1, y=PC3, color=cluster_column)) + 
         geom_point( size=0.8, alpha=0.7) +
         theme_linedraw() + 
         guides(color = guide_legend(override.aes = list(size = 5))) +
         scale_fill_manual(values=col_palette) +
         scale_colour_manual(name=NULL, values=col_palette) +
-        labs(title="Principal Component Analysis PC1 vs PC3", 
-            caption="sub-cohorts n=100")
+        labs(title="Principal Component Analysis PC1 vs PC3",
+             caption=date)
+ggsave(paste0(prefix,".PC1-PC3.png"), width = 6, height = 5, dpi = 300)
+
 ```
 
 
@@ -175,47 +256,62 @@ theme_2 = theme(panel.background = element_rect(fill=NA),
              plot.title = element_text(hjust = 0.5),
              axis.title.x = element_blank())
 
-ggplot(eigenvec, 
-       aes(x=POPULATION, y=PC1, color=POPULATION, fill=POPULATION, alpha=0.9)) + 
-       geom_violin(trim=FALSE) +
-       geom_boxplot(width=0.1, color = "black", cex = 0.5, outlier.size=0.5) +
-       theme_2   + 
-       scale_colour_manual(values=col_palette) +
-       scale_fill_manual(values=col_palette) +
-       labs(title="RedLat PC1 according to country",
-            caption="sub-cohorts n=100")
+# State the number of principal components you want to plot
+pcs = 5
 
-ggplot(eigenvec, 
-       aes(x=POPULATION, y=PC2, color=POPULATION, fill=POPULATION, alpha=0.9)) + 
-       geom_violin(trim=FALSE) +
-       geom_boxplot(width=0.1, color = "black", cex = 0.5, outlier.size=0.5) +
-       theme_2   + 
-       scale_colour_manual(values=col_palette) +
-       scale_fill_manual(values=col_palette) +
-       labs(title="RedLat PC2 according to country",
-            caption="sub-cohorts n=100")
+plot_pc = paste0("PC", 1:(pcs)) # Count the number of columns
 
-ggplot(eigenvec, 
-       aes(x=POPULATION, y=PC3, color=POPULATION, fill=POPULATION, alpha=0.9)) + 
-       geom_violin(trim=FALSE) +
-       geom_boxplot(width=0.1, color = "black", cex = 0.5, outlier.size=0.5) +
-       theme_2   + 
-       scale_colour_manual(values=col_palette) +
-       scale_fill_manual(values=col_palette) +
-       labs(title="RedLat PC3 according to country",
-            caption="sub-cohorts n=100")
+for (pc in plot_pc) {
+    # Create the plot for the current PC
+    p = ggplot(eigenvec, aes(x=.data[[cluster_column]],
+                             y=.data[[pc]], 
+                             color=.data[[cluster_column]], 
+                             fill=.data[[cluster_column]])) + 
+        geom_violin(trim=FALSE, alpha=0.9) +
+        geom_boxplot(width=0.1, color="black", outlier.size=0.5, alpha=0.9) +
+        theme_2 + 
+        scale_colour_manual(values=col_palette) +
+        scale_fill_manual(values=col_palette) +
+        labs(title=paste("RedLat", pc, "according to", cluster_column),
+             caption=date)
+    
+    # Print the plot
+    print(p)
 
-ggplot(eigenvec, 
-       aes(x=POPULATION, y=PC4, color=POPULATION, fill=POPULATION, alpha=0.9)) + 
-       geom_violin(trim=FALSE) +
-       geom_boxplot(width=0.1, color = "black", cex = 0.5, outlier.size=0.5) +
-       theme_2   + 
-       scale_colour_manual(values=col_palette) +
-       scale_fill_manual(values=col_palette) +
-       labs(title="RedLat PC4 according to country",
-            caption="sub-cohorts n=100")
+    # Save the plot
+    filename = paste(prefix, pc, cluster_column, "png", sep = ".")
+    ggsave(filename, plot = p, width = 6, height = 5, dpi = 300)
+}
+
+
 ```
+The following code generates a pair-plot our top 4 principle components. As ggplot does not have this functionality, we have to use base R for plotting
 
+```{r}
+# Assign a Color to each country
+col_countries= c("Argentina" = '#4477AA', "Brazil" = '#EE6677', "Chile" = '#228833', "Colombia" = '#CCBB44', "Mexico" = '#66CCEE', "Other" = '#A9A9A9', "Peru" = '#AA3377')
+
+# Start PNG device
+png(paste0(prefix, ".PCA_pairs_plot.png"), width = 2400, height = 2400, res = 300)
+
+# Create a pair plot with scatter plots
+pairs(eigenvec[, c("PC1", "PC2", "PC3", "PC4")],
+      pch = 19,
+      col = alpha(col_countries[eigenvec$cluster_column], 0.4),
+      main = "Principal Component Analysis")
+mtext(date, side = 1, line =4, cex = 0.5)
+
+# Close PNG device
+dev.off()
+
+# Plot a legend for labels and colors
+png(paste0(prefix, ".PCA_pairs_plot_legend.png"), width = 2400, height = 800, res = 300)
+
+plot(NULL,xaxt='n',yaxt='n',bty='n',ylab='',xlab='', xlim=0:1, ylim=0:1)
+legend_plot = legend("top", legend = names(col_countries), col = col_countries, pch = 19, title = "Sequencing type",
+                      horiz = TRUE, cex = 0.7)
+dev.off()
+```
 
 Perform a Scree plot to check the explained variance
 ```{r variance-expained-pc}
@@ -223,22 +319,27 @@ Perform a Scree plot to check the explained variance
 colnames(eigenval) = "values"
 eigenval$PC = 1:nrow(eigenval)
 
-# Sum all eigenvalues
+# Select the number of Eigenvalues you want to plot
+eigenval_subset = 10
+eigenval_plot = eigenval[1:eigenval_subset, ]
+
+# Sum all eigenvalues in the original file
 total_sum = sum(eigenval$values)
 
-# Identify the proportion explianed by each PC
-eigenval$proportions = (eigenval$values / total_sum) * 100
+# Identify the proportion explianed by each of PC that will be plotted
+eigenval_plot$proportions = (eigenval_plot$values / total_sum)
 
-ggplot(eigenval, 
+ggplot(eigenval_plot, 
        aes(x=PC, y=proportions, color='4477AA', fill='4477AA' )) + 
        geom_bar(stat="identity") +
        theme_2 + 
         scale_fill_manual(values=col_palette) +
         scale_colour_manual(values=col_palette) +
-        scale_x_continuous(name="Principal Component", breaks=seq(1,20,1)) +
-        scale_y_continuous(name="Variance explained (%)") +
-        labs(title="Percentage of variance explained by each PC", 
-            caption="sub-cohorts n=100")
+        scale_x_continuous(name="Principal Component", breaks=seq(1,eigenval_subset,1)) +
+        scale_y_continuous(name="Variance Proportion") +
+        labs(title=paste("Variance explained by top", eigenval_subset, "Principal Components", sep = " "),
+             caption=date)
+ggsave(paste0(prefix, eigenval_subset, ".pc-scree-plot.png"), width = 6, height = 5, dpi = 300)
 ```
 
 ## ADMIXTURE Analysis

@@ -1,17 +1,33 @@
 #!/bin/bash
-#Script to extract and annotate a gene panel
-#Juliana Acosta-Uribe 2023
+## Script to extract and annotate a gene panel
+## Juliana Acosta-Uribe April 2024
 
 # PART ONE: PREPARE YOUR FILES
 
 ## Set up the files that will be used
 vcf_file='redlat_array' #name of vcf file. Must be gzipped and end in 'vcf.gz'
-panel='neurodegeneration_panel_148.txt' #must be in bed format: 'chr', 'start bp', 'end bp'. Chromosome format must match vcf style
-samples_passQC='PreimputationQC_pass_samples.one-column.txt' #one column with the IDs of samples that passed QC. Sample ID must match ID in vcf
+
+
 annovar_file=${vcf_file}_panel.hg38_multianno
 annovar_database_PATH='/home/acostauribe/bin/annovar/humandb/'
 plink_file='redlat_array.qc' #give a prefix for the plink files that will be created (option A) or for the preexisting plink file (option B)
-cohorts='sites.txt' # file where each line is the name of a file that contains the individuals from a site/group. Individual IDs need to be in plink FAM-ID IND-ID
+cohorts='sites.txt' # file where each line is the name of a file that contains the individuals from a cohort/group of interest. 
+# You also need to provide another file that contains individuals in each group. One sample per line, two columns in plink format FAM-ID IND-ID
+
+
+## VCF files can get very big, you can extract and annotate a set of regions of interest.
+## Regions of interest (i.e. genes) must be in bed format: 'chr', 'start bp', 'end bp'. Chromosome format must match vcf style (eg. "chr1" vs. "1")
+## If you wantto extract a subset of regions, set extract_panel to "TRUE" and provide a file as described
+extract_panel=TRUE
+panel='neurodegeneration_panel_148.txt' 
+
+## You can also extract samples for the analysis
+extract_samples=TRUE
+samples='PreimputationQC_pass_samples.one-column.txt' #one column with the IDs of samples that passed QC. Sample ID must match an ID in the
+vcf
+
+## If you want to retain only monomorphic variants in tour ANNOVAR files, set to "TRUE"
+remove_monopmorphic=TRUE
 
 
 echo "Starting script at" $(date)
@@ -20,14 +36,30 @@ echo "Starting script at" $(date)
 
 ## 1. Extract target regions from vcf file
 
-#vcftools --gzvcf ${vcf_file}.vcf.gz --bed ${panel} --keep  ${samples_passQC} --recode --recode-INFO-all --out ${vcf_file}_panel
-#mv ${vcf_file}_panel.recode.vcf ${vcf_file}_panel.vcf 
-#bcftools view --min-ac 1  ${vcf_file}_panel.vcf > tmp
-#mv tmp ${vcf_file}_panel.vcf
+if  [[$extract_panel && $extract_samples == 'TRUE' ]]; then
+    vcftools --gzvcf ${vcf_file}.vcf.gz --bed ${panel} --keep  ${samples} --recode --recode-INFO-all --out ${vcf_file}_samples_panel
+    mv ${vcf_file}_samples_panel.recode.vcf ${vcf_file}_samples_panel.vcf 
+    vcf_file=${vcf_file}_samples_panel
+
+    elif [[$extract_panel == 'TRUE' ]]; then
+    vcftools --gzvcf ${vcf_file}.vcf.gz --bed ${panel} --recode --recode-INFO-all --out ${vcf_file}_panel
+    mv ${vcf_file}_panel.recode.vcf ${vcf_file}_panel.vcf 
+    vcf_file=${vcf_file}_panel
+
+    elif [[ $extract_samples == 'TRUE' ]]; then
+    vcftools --gzvcf ${vcf_file}.vcf.gz --keep  ${samples} --recode --recode-INFO-all --out ${vcf_file}_samples
+    mv ${vcf_file}_samples.recode.vcf ${vcf_file}_samples.vcf 
+    vcf_file=${vcf_file}_samples
+fi
+if [ $remove_monopmorphic == 'TRUE' ]; then]
+bcftools view --min-ac 1  ${vcf_file}_panel.vcf > tmp
+mv tmp ${vcf_file}_non-mono.vcf
+vcf_file=${vcf_file}_non-mono.vcf
+fi
 
 ### gzip and index
-bgzip ${vcf_file}_panel.vcf
-tabix -p vcf ${vcf_file}_panel.vcf.gz
+bgzip ${vcf_file}.vcf
+tabix -p vcf ${vcf_file}.vcf.gz
 
 ## 2. Use ANNOVAR to annotate the vcf. [expects vcf aligned to hg38]
 
@@ -146,16 +178,15 @@ rm clinvar_pathogenic
 ## I will be counting cases and controls of ${annovar_file}.exonic.non-syn.txt
 
 ## 1. Import data into plink 
-#====NEEDS TO BE FIXED
 
-#plink --vcf ${vcf_file}.vcf --vcf-half-call m --allow-extra-chr --double-id --keep-allele-order --make-bed --out ${plink_file}
+plink --vcf ${vcf_file}.vcf --vcf-half-call m --allow-extra-chr --double-id --keep-allele-order --make-bed --out ${plink_file}
 #.bim and .fam files were edited to for variant id and to have sex and phenotype
-#plink --vcf ${plink_file} --extract range variants.txt --make-bed --out ${plink_file}_panel
-
-###I had to make the variants.txt file manually
-#===================
 
 
+
+awk 'NR > 1 {gsub(/chr/, "", $1); print $1, $2, $3, $7}' ${annovar_file}.exonic.non-syn.txt > extract_variants.txt
+
+#===================OPTION
 ## Extract your cohorts according to sample name
 #grep	'AF'	${plink_file}.fam	>	avila
 #grep	'BE'	${plink_file}.fam	>	behrens
@@ -165,10 +196,11 @@ rm clinvar_pathogenic
 #grep	'LO'	${plink_file}.fam	>	Lopera
 #grep	'SL'	${plink_file}.fam	>	slachevski
 #grep	'TA'	${plink_file}.fam	>	takada
+#=======================
 
 ## 2. Count SNPs in all the cohort
 
-plink --bfile ${plink_file} --extract range variants.txt --model --allow-no-sex --out ${plink_file}_panel
+plink --bfile ${plink_file} --extract range extract_variants.txt --model --allow-no-sex --out ${plink_file}_panel
 #output ends in .model
 
 ### Retain 'GENO' counts
@@ -181,7 +213,7 @@ awk -v OFS='\t' '{print $2, $6, $7}' $plink_file.all-variants.geno > ${plink_fil
 ## 3. Count SNPs in sub-cohorts
 while read line; do 
     plink --bfile ${plink_file} \
-    --extract vars.txt \
+    --extract extract_variants.txt \
     --keep $line \
     --model \
     --allow-no-sex \

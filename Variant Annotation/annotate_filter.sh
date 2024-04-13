@@ -430,7 +430,7 @@ EOF
    if [[ -s "annotated_variants_cohort_counts.tsv" ]]; then
         mv "annotated_variants_cohort_counts.tsv" "${annovar_file}.counts.txt"
         annovar_file="${annovar_file}.counts"
-        echo "Merging variant annotations and carrier counts is complete. Output saved to ${annovar_file}.counts"
+        echo "Merging variant annotations and carrier counts is complete. Output saved to ${annovar_file}.txt"
     else
         echo "${annovar_file}.counts file was not properly generated. Stopping script"
         return 1  # return with a status code of 1 to indicate an error.
@@ -467,7 +467,7 @@ if [[ $filter_annotated == 'TRUE' ]]; then
         fi
     fi
     
-    echo "Filtering annotated variants in ${$annovar_file}"
+    echo "Filtering annotated variants in ${annovar_file}"
 
     ## 1. Count number of variants
     echo "Number of variants in ${annovar_file}.txt:"
@@ -522,8 +522,9 @@ if [[ $filter_annotated == 'TRUE' ]]; then
 fi
 
 ## Tidy up!
-rm 
-*_plink
+rm *_plink
+rm *.nosex
+
 
 ## Store annotations in their own directory
 echo "Creating a directory for annotations"

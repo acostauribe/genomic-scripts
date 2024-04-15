@@ -5,13 +5,13 @@
 # This script is set up in three phases. You can turn "on" or "off" the different phases below.
 # After setting up what you need, run this script as follows: 
 ## chmod u+x annotate_variants.sh
-## ./annotate_filter.sh | tee aannotate_filter.log \
+## ./annotate_variants.sh | tee annotate_variants.log\
 
 ## PART ONE: ANNOTATE VCF
 ### Extracts areas and samples of interest, checking alignment and normalization, annotate vcf with ANNOVAR
 ### outputs are a annotated vcf "*.hg38_multianno.vcf.gz" and a tab delimited table with the variant information and genotypes "*.hg38_multianno.txt"
 ### Set to "TRUE" is you want to run this step
-annotate_vcf=TRUE
+annotate_vcf=FALSE
 
 ## PART TWO: COUNT CASES AND CONTROLS CARRYING EACH VARIANT
 ### This step uses plink to add a count of the cases and controls of a given variant.
@@ -20,7 +20,7 @@ annotate_vcf=TRUE
 count_carriers=TRUE
 
 ## PART THREE: FILTER ANNOTATED VARIANTS
-### Filter annotated variants in "*.hg38_multianno.txt" based on prefered settings. 
+### Filter annotated variants in "*.hg38_multianno.txt" or "*.hg38_multianno.counts.txt" based on prefered settings. 
 ### Set to "TRUE" is you want to run this step
 filter_annotated=TRUE
 
@@ -104,7 +104,7 @@ gene_list="genes_interest.txt"
 extract_pathogenic='TRUE'
 ## You can extract reported pathogenic variants in all the data, or in a subset of genes (see line 82)
 
-## Get Exonic and Splicing variants. 
+## Get Exonic Variants and Intronic variants may have impact on splicing (based on dbscSNV_RF_SCORE and dbscSNV_ADA_SCORE)
 ## Generates annotated_file.exonic.txt
 extract_coding='TRUE'
 
@@ -251,6 +251,16 @@ if [[ $annotate_vcf == "TRUE" ]]; then
         echo "VCF annotation failed. Stopping script"
         return 1  # return with a status code of 1 to indicate an error.
     fi
+
+    remove_genotypes="TRUE"
+    if [[ $remove_genotypes == "TRUE" ]]; then
+        #echo "Removing genotypes from ANNOVAR file for easier filtering. Original file will be preserved as file.hg38_multianno.original.txt"
+        annovar_file="${annovar_file%.hg38_multianno}"
+        cut -f -128 "${annovar_file}.hg38_multianno.txt" > "${annovar_file}.no-geno.hg38_multianno.txt"
+        mv "${annovar_file}.hg38_multianno.txt" "${annovar_file}.hg38_multianno.original.txt"
+        annovar_file="${annovar_file}.no-geno.hg38_multianno"
+    fi
+
 fi
 
 
@@ -410,13 +420,23 @@ if [[ $count_carriers == "TRUE" ]]; then
     ## Notice that Pyhton sub-script cannot be indented. Leave as is
     ## Execute Python code using heredoc
 
+    remove_genotypes="TRUE"
+    if [[ $remove_genotypes == "TRUE" ]]; then
+        annovar_file="${annovar_file%.hg38_multianno}"
+        cut -f -128 "${annovar_file}.hg38_multianno.txt" > "${annovar_file}.no-geno.hg38_multianno.txt"
+        mv "${annovar_file}.hg38_multianno.txt" "${annovar_file}.hg38_multianno.original.txt"
+        annovar_file="${annovar_file}.no-geno.hg38_multianno"
+    fi
+
+echo "Merging annotations and counts with Python"
+
 python3 - <<EOF
 import sys
 import pandas as pd
 
 # Read TSV files into pandas DataFrames, assuming they have headers
-file_a = pd.read_table("${annovar_file}.txt")
-file_b = pd.read_table("${plink_file}.cohort-comparison.txt")
+file_a = pd.read_table("${annovar_file}.txt", low_memory=False)
+file_b = pd.read_table("${plink_file}.cohort-comparison.txt", low_memory=False)
 
 
 # Merge the dataframes on 'ID'
@@ -428,11 +448,12 @@ merged_data.to_csv('annotated_variants_cohort_counts.tsv', sep='\t', index=False
 EOF
 
    if [[ -s "annotated_variants_cohort_counts.tsv" ]]; then
-        mv "annotated_variants_cohort_counts.tsv" "${annovar_file}.counts.txt"
-        annovar_file="${annovar_file}.counts"
-        echo "Merging variant annotations and carrier counts is complete. Output saved to ${annovar_file}.txt"
+        annovar_file="${annovar_file%.hg38_multianno}"
+        mv "annotated_variants_cohort_counts.tsv" "${annovar_file}.counts.hg38_multianno.txt"
+        annovar_file="${annovar_file}.counts.hg38_multianno"
+        echo "Merging variant annotations and carrier counts is complete. Output saved to ${annovar_file}.counts.hg38_multianno.txt"
     else
-        echo "${annovar_file}.counts file was not properly generated. Stopping script"
+        echo "Annotations and counts merge failed. Stopping script"
         return 1  # return with a status code of 1 to indicate an error.
     fi
 fi
@@ -442,13 +463,14 @@ fi
 if [[ $filter_annotated == 'TRUE' ]]; then
 
     if [[ $annotate_vcf != "TRUE" && $count_carriers != "TRUE" ]]; then
+        # Search for a previuosly annotated file
         annovar_file=($(find . -maxdepth 1 -type f -name "*.hg38_multianno.txt" ))
         # Check the number of files found
         if [[ ${#annovar_file[@]} -eq 1 ]]; then
             # There is one file found, assign to annovar_file
             annovar_file="${annovar_file[0]}"
             if [[ -s "$annovar_file" ]]; then
-                echo "ANNOVAR file is properly formatted"
+                echo "ANNOVAR file found"
                 annovar_file="${annovar_file%.txt}"
             else
                 echo "$annovar_file is not readable. Stopping script"
@@ -456,18 +478,18 @@ if [[ $filter_annotated == 'TRUE' ]]; then
             fi
         elif [[ ${#annovar_file[@]} -gt 1 ]]; then
             # More than one file found, raise a warning
-            echo "Warning: More than one ANNOVAR file found. Keep ony one file ending in '.hg38_multianno.txt' in the working directory"
+            echo "Warning: More than one ANNOVAR file found. Keep ony one file ending in '.hg38_multianno.counts.txt or .hg38_multianno.txt' in the working directory"
             echo "Stopping script"
             return 1  # return with a status code of 1 to indicate an error.
         else
-            # If no file was found, raise a warning
-            echo "Provide a valid ANNOVAR file for variant filtering. Script requires one file ending in '.hg38_multianno.txt' in the working directory"
-            echo "Stopping script"
-            return 1  # return with a status code of 1 to indicate an error.
+        # If no file was found, raise a warning
+        echo "Provide a valid ANNOVAR file for variant filtering. Script requires one file ending in '.hg38_multianno.txt' in the working directory"
+        echo "Stopping script"
+        return 1  # return with a status code of 1 to indicate an error.
         fi
     fi
     
-    echo "Filtering annotated variants in ${annovar_file}"
+    echo "Filtering annotated variants in ${annovar_file}.txt"
 
     ## 1. Count number of variants
     echo "Number of variants in ${annovar_file}.txt:"
@@ -476,7 +498,7 @@ if [[ $filter_annotated == 'TRUE' ]]; then
     ## 2. Extract variants in a subset of genes 
     if [[ $extract_genes == 'TRUE' ]]; then
         echo "Extracting variants in ${gene_list}"
-        awk -v OFS='\t' 'NR==FNR {genes[$1]; next} NR > 1 {if ($7 in genes) print}' "$gene_list" "${annovar_file}.txt" > "${annovar_file}.gene_list.txt"
+        awk -v OFS='\t' 'NR==FNR {genes[$1]; next} FNR==1 {print; next} {if ($7 in genes) print}' "$gene_list" "${annovar_file}.txt" > "${annovar_file}.gene_list.txt"
         annovar_file="${annovar_file}.gene_list"
         echo "Number of variants in ${annovar_file}.txt:"
         wc -l "${annovar_file}.txt" | awk '{print $1-1}'
@@ -486,7 +508,7 @@ if [[ $filter_annotated == 'TRUE' ]]; then
     if [[ $extract_pathogenic == 'TRUE' ]]; then
         echo "Extracting variants that have been reported as pathogenic in ClinVar"
         echo "Warning: Pathogenic variants are reported as of March 20 2022"
-        awk -v OFS='\t' 'NR > 1 && /athogenic/ && !/Conflicting/' "${annovar_file}.txt" > "${annovar_file}.ClinVar-Pathogenic.txt"
+        awk -v OFS='\t' 'FNR==1 || (NR > 1 && /athogenic/ && !/Conflicting/)' "${annovar_file}.txt" > "${annovar_file}.ClinVar-Pathogenic.txt"
         echo "Number of variants in ${annovar_file}.ClinVar-Pathogenic.txt:"
         wc -l "${annovar_file}.ClinVar-Pathogenic.txt" | awk '{print $1-1}'
     fi
@@ -494,7 +516,7 @@ if [[ $filter_annotated == 'TRUE' ]]; then
     ## 4. Get Exonic and Splicing variants.
     if [[ $extract_coding == 'TRUE' ]]; then
         echo "Retaining Exonic and Splicing variants"
-        awk -v OFS='\t' 'NR==1; NR > 1{ if(($6 == "exonic") || ($6 == "exonic;splicing") || ($6 == "splicing")) { print } }' "${annovar_file}.txt" > "${annovar_file}.exonic.txt"
+        awk -v OFS='\t' 'NR==1; NR > 1{ if((($6 == "exonic") || ($6 == "exonic;splicing") || ($6 == "splicing")) || (($115 >= 0.6) || ($116 >= 0.6))) { print } }' "${annovar_file}.txt" > "${annovar_file}.exonic.txt"
         annovar_file="${annovar_file}.exonic"
         echo "Number of variants in ${annovar_file}.txt:"
         wc -l "${annovar_file}.txt" | awk '{print $1-1}'
@@ -522,15 +544,14 @@ if [[ $filter_annotated == 'TRUE' ]]; then
 fi
 
 ## Tidy up!
-rm *_plink
-rm *.nosex
-
+#rm *_plink
+#rm *.nosex
 
 ## Store annotations in their own directory
-echo "Creating a directory for annotations"
-mkdir ANNOVAR
-mv ${annovar_file}.* ./ANNOVAR
+#echo "Creating a directory for annotations"
+#mkdir ANNOVAR
+#mv ${annovar_file}.* ./ANNOVAR
 #mv filter_variants.* ./ANNOVAR
-mv ANNOVAR ANNOVAR_$(date "+%Y%m%d")
+#mv ANNOVAR ANNOVAR_$(date "+%Y%m%d")
 
 echo "Finished" $(date)

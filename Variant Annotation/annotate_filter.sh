@@ -136,7 +136,7 @@ echo "Starting script on $(date)"
 if [[ $annotate_vcf == "TRUE" ]]; then
 
     ## 0. Search for vcf
-    if [ -f "${vcf_file}.vcf" && -s "${vcf_file}.vcf"]; then
+        if [[ -f "${vcf_file}.vcf" && -s "${vcf_file}.vcf" ]]; then
         echo "gzipping ${vcf_file}.vcf"
         bgzip "${vcf_file}.vcf"
         echo "Starting analysis of ${vcf_file}.vcf.gz"

@@ -45,7 +45,7 @@ if [[ $annotate_vcf == "TRUE" ]]; then
 
     ## Using ANNOVAR to annotate the vcf 
     echo "Using ANNOVAR to annotate ${vcf_file}"
-    table_annovar.pl "${vcf_file}.vcf.gz" "${annovar_database_PATH}" --buildver hg38 --outfile "${vcf_file}" --protocol refGene,ensGene,exac03,gnomad30_genome,ALL.sites.2015_08,AFR.sites.2015_08,EUR.sites.2015_08,EAS.sites.2015_08,SAS.sites.2015_08,AMR.sites.2015_08,avsnp150,clinvar_20220320,dbnsfp33a,dbscsnv11,revel --operation g,g,f,f,f,f,f,f,f,f,f,f,f,f,f --nastring . --vcfinput --remove 
+    table_annovar.pl "${vcf_file}.vcf.gz" "${annovar_database_PATH}" --buildver hg38 --outfile "${vcf_file}" --protocol refGene,ensGene,exac03,gnomad41_genome,allofus,ALL.sites.2015_08,AFR.sites.2015_08,EUR.sites.2015_08,EAS.sites.2015_08,SAS.sites.2015_08,AMR.sites.2015_08,avsnp151,clinvar_20220320,dbnsfp33a,dbscsnv11,revel --operation g,g,f,f,f,f,f,f,f,f,f,f,f,f,f --nastring . --vcfinput --remove 
 
     ## This will produce ${vcf_file}.hg38_multianno.vcf and ${vcf_file}.hg38_multianno.txt
     annovar_file="${vcf_file}.hg38_multianno"

@@ -57,11 +57,6 @@ annotate_variation.pl -buildver hg38 -downdb -webfrom annovar dbscsnv11 $humandb
 # Mendelian Clinically Applicable Pathogenicity (M-CAP) Score scores for non-synonymous variants. 
 # http://bejerano.stanford.edu/mcap/index.html [updated 20161205]
 annotate_variation.pl -buildver hg38 -downdb -webfrom annovar mcap13 $humandb
-# REVEL scores for non-synonymous variants 
-# https://sites.google.com/site/revelgenomics/about?pli=1 [updated 20161205]
-annotate_variation.pl -buildver hg38 -downdb -webfrom annovar revel $humandb
-# InterVar: clinical interpretation of missense variants [Updated 20180325]
-annotate_variation.pl -buildver hg38 -downdb -webfrom annovar intervar_20180118 $humandb
 
 
 ## 4. Annotate your file

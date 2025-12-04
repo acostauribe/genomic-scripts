@@ -41,83 +41,92 @@ fasta_file='/home/acostauribe/public_html/Utilities/hg38.fa.gz'
 
 echo "Starting script on $(date)"
 
-if [[ $annotate_vcf == "TRUE" ]]; then
+## Using ANNOVAR to annotate the vcf 
+echo "Using ANNOVAR to annotate ${vcf_file}"
+table_annovar.pl "${vcf_file}.vcf.gz" "${annovar_database_PATH}" \
+--buildver hg38 \
+--outfile "${vcf_file}" \
+--protocol refGene,ensGene,gnomad41_genome,allofus,avsnp151,clinvar_20250721,dbnsfp47a,dbscsnv11 \
+--operation g,g,f,f,f,f,f,f \
+--nastring . \
+--vcfinput \
+--remove 
 
-    ## Using ANNOVAR to annotate the vcf 
-    echo "Using ANNOVAR to annotate ${vcf_file}"
-    table_annovar.pl "${vcf_file}.vcf.gz" "${annovar_database_PATH}" --buildver hg38 --outfile "${vcf_file}" --protocol refGene,ensGene,exac03,gnomad41_genome,allofus,ALL.sites.2015_08,AFR.sites.2015_08,EUR.sites.2015_08,EAS.sites.2015_08,SAS.sites.2015_08,AMR.sites.2015_08,avsnp151,clinvar_20220320,dbnsfp33a,dbscsnv11,revel --operation g,g,f,f,f,f,f,f,f,f,f,f,f,f,f --nastring . --vcfinput --remove 
+## This will produce ${vcf_file}.hg38_multianno.vcf and ${vcf_file}.hg38_multianno.txt
+annovar_file="${vcf_file}.hg38_multianno"
 
-    ## This will produce ${vcf_file}.hg38_multianno.vcf and ${vcf_file}.hg38_multianno.txt
-    annovar_file="${vcf_file}.hg38_multianno"
+## 6. Edit the ANNOVAR results header 
+echo "Editing ANNOVAR header" 
 
-    ## 6. Edit the ANNOVAR results header 
-    echo "Editing ANNOVAR header" 
+## Get the sample IDs from the vcf
+grep '#CHROM' "${annovar_file}.vcf" > "${annovar_file}.chrom_line"
+bgzip "${annovar_file}.vcf"
 
-    ## Get the sample IDs from the vcf
-    grep '#CHROM' "${annovar_file}.vcf" > "${annovar_file}.chrom_line"
-    bgzip "${annovar_file}.vcf"
+head -1 "${annovar_file}.txt" > "${annovar_file}.header"
+sed -i 's/ /\t/g' "${annovar_file}.header"
+cut -f -120 "${annovar_file}.header" > "${annovar_file}.header_120"
+paste "${annovar_file}.header_120" "${annovar_file}.chrom_line" > "${annovar_file}.header_new"
+rm "${annovar_file}.chrom_line"
 
-    head -1 "${annovar_file}.txt" > "${annovar_file}.header"
-    sed -i 's/ /\t/g' "${annovar_file}.header"
-    cut -f -120 "${annovar_file}.header" > "${annovar_file}.header_120"
-    paste "${annovar_file}.header_120" "${annovar_file}.chrom_line" > "${annovar_file}.header_new"
-    rm "${annovar_file}.chrom_line"
+## Edit strings in ANNOVAR column IDs to make it more user friendly
+awk -v OFS='\t' '{sub("AF","GnomAD_v3_all",$24);print}' "${annovar_file}.header_new" > temp
+mv temp "${annovar_file}.header_new"
+## Using sed to make multiple replacements
+sed -i -e 's/AF_raw/GnomAD_v3_raw/g' \
+-e 's/AF_male/GnomAD_v3_Male/g' \
+-e 's/AF_female/GnomAD_v3_Female/g' \
+-e 's/AF_afr/GnomAD_v3_African/g' \
+-e 's/AF_ami/GnomAD_v3_Amish/g' \
+-e 's/AF_amr/GnomAD_v3_American/g' \
+-e 's/AF_asj/GnomAD_v3_Ashkenazi/g' \
+-e 's/AF_eas/GnomAD_v3_EastAsian/g' \
+-e 's/AF_fin/GnomAD_v3_Finnish/g' \
+-e 's/AF_nfe/GnomAD_v3_European/g' \
+-e 's/AF_oth/GnomAD_v3_Other/g' \
+-e 's/AF_sas/GnomAD_v3_SouthAsian/g' \
+-e 's/ALL.sites.2015_08/1000GP_2015_All/g' \
+-e 's/AFR.sites.2015_08/1000GP_2015_African/g' \
+-e 's/EUR.sites.2015_08/1000GP_2015_European/g' \
+-e 's/EAS.sites.2015_08/1000GP_2015_EastAsian/g' \
+-e 's/SAS.sites.2015_08/1000GP_2015_SouthAsian/g' \
+-e 's/AMR.sites.2015_08/1000GP_2015_American/g' \
+-e 's/CLNALLELEID/ClinVar_AlleleID/g' \
+-e 's/CLNDN/ClinVar_Disease/g' \
+-e 's/CLNDISDB/ClinVar_DiseaseDatabase/g' \
+-e 's/CLNREVSTAT/ClinVar_ReviewStatus/g' \
+-e 's/CLNSIG/ClinVar_Significance/g' "${annovar_file}.header_new"
 
-    ## Edit strings in ANNOVAR column IDs to make it more user friendly
-    awk -v OFS='\t' '{sub("AF","GnomAD_v3_all",$24);print}' "${annovar_file}.header_new" > temp
-    mv temp "${annovar_file}.header_new"
-    ## Using sed to make multiple replacements
-    sed -i -e 's/AF_raw/GnomAD_v3_raw/g' \
-        -e 's/AF_male/GnomAD_v3_Male/g' \
-        -e 's/AF_female/GnomAD_v3_Female/g' \
-        -e 's/AF_afr/GnomAD_v3_African/g' \
-        -e 's/AF_ami/GnomAD_v3_Amish/g' \
-        -e 's/AF_amr/GnomAD_v3_American/g' \
-        -e 's/AF_asj/GnomAD_v3_Ashkenazi/g' \
-        -e 's/AF_eas/GnomAD_v3_EastAsian/g' \
-        -e 's/AF_fin/GnomAD_v3_Finnish/g' \
-        -e 's/AF_nfe/GnomAD_v3_European/g' \
-        -e 's/AF_oth/GnomAD_v3_Other/g' \
-        -e 's/AF_sas/GnomAD_v3_SouthAsian/g' \
-        -e 's/ALL.sites.2015_08/1000GP_2015_All/g' \
-        -e 's/AFR.sites.2015_08/1000GP_2015_African/g' \
-        -e 's/EUR.sites.2015_08/1000GP_2015_European/g' \
-        -e 's/EAS.sites.2015_08/1000GP_2015_EastAsian/g' \
-        -e 's/SAS.sites.2015_08/1000GP_2015_SouthAsian/g' \
-        -e 's/AMR.sites.2015_08/1000GP_2015_American/g' \
-        -e 's/CLNALLELEID/ClinVar_AlleleID/g' \
-        -e 's/CLNDN/ClinVar_Disease/g' \
-        -e 's/CLNDISDB/ClinVar_DiseaseDatabase/g' \
-        -e 's/CLNREVSTAT/ClinVar_ReviewStatus/g' \
-        -e 's/CLNSIG/ClinVar_Significance/g' "${annovar_file}.header_new"
+## Paste edited header with annotations
+sed '1d' "${annovar_file}.txt" > "${annovar_file}.header_removed"
+cat "${annovar_file}.header_new" "${annovar_file}.header_removed" > "${annovar_file}.txt"
+rm "${annovar_file}.header"*
 
-    ## Paste edited header with annotations
-    sed '1d' "${annovar_file}.txt" > "${annovar_file}.header_removed"
-    cat "${annovar_file}.header_new" "${annovar_file}.header_removed" > "${annovar_file}.txt"
-    rm "${annovar_file}.header"*
-
-    if [[ -f "${annovar_file}.txt" && -s "${annovar_file}.txt" ]]; then
-        echo "ANNOVAR file was successfully generated: ${annovar_file}"
-    else
-        echo "VCF annotation failed. Stopping script"
-        return 1  # return with a status code of 1 to indicate an error.
-    fi
-
-    remove_genotypes="TRUE"
-    if [[ $remove_genotypes == "TRUE" ]]; then
-        #echo "Removing genotypes from ANNOVAR file for easier filtering. Original file will be preserved as file.hg38_multianno.original.txt"
-        annovar_file="${annovar_file%.hg38_multianno}"
-        Otherinfo1=$(awk -F'\t' 'NR==1{for(i=1;i<=NF;i++) if($i=="Otherinfo1"){print i; exit}}' "${annovar_file}.hg38_multianno.txt")
-        if (( Otherinfo1 > 1 )); then
-        cut -f "1-$((Otherinfo1-1))" "${annovar_file}.hg38_multianno.txt" > "${annovar_file}.no-geno.hg38_multianno.txt"
-        mv "${annovar_file}.hg38_multianno.txt" "${annovar_file}.hg38_multianno.original.txt"
-        annovar_file="${annovar_file}.no-geno.hg38_multianno"
-        else
-        echo "Annovar file does not contain genotypes"
-        fi
-    fi
-
+if [[ -f "${annovar_file}.txt" && -s "${annovar_file}.txt" ]]; then
+echo "ANNOVAR file was successfully generated: ${annovar_file}"
+else
+echo "VCF annotation failed. Stopping script"
+return 1  # return with a status code of 1 to indicate an error.
 fi
+
+remove_genotypes="TRUE"
+if [[ $remove_genotypes == "TRUE" ]]; then
+echo "Removing genotypes from ANNOVAR file for easier filtering." 
+# Original file will be preserved as file.hg38_multianno.original.txt and file.no-geno.hg38_multianno.txt will be generated.
+
+# Get the index of the column that matches Otherinfo1
+Otherinfo1=$(awk -F'\t' 'NR==1{for(i=1;i<=NF;i++) if($i=="Otherinfo1"){print i; exit}}' "${annovar_file}.txt")
+
+# If Genotypes are present, extract only the annotations
+if (( Otherinfo1 > 1 )); then
+annovar_file="${annovar_file%.hg38_multianno}"
+cut -f "1-$((Otherinfo1-1))" "${annovar_file}.hg38_multianno.txt" > "${annovar_file}.no-geno.hg38_multianno.txt"
+mv "${annovar_file}.hg38_multianno.txt" "${annovar_file}.hg38_multianno.original.txt"
+annovar_file="${annovar_file}.no-geno.hg38_multianno"
+else
+echo "Annovar file does not contain genotypes"
+fi
+fi
+
 
 echo "Finished" $(date)
 

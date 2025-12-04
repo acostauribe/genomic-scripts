@@ -107,9 +107,14 @@ if [[ $annotate_vcf == "TRUE" ]]; then
     if [[ $remove_genotypes == "TRUE" ]]; then
         #echo "Removing genotypes from ANNOVAR file for easier filtering. Original file will be preserved as file.hg38_multianno.original.txt"
         annovar_file="${annovar_file%.hg38_multianno}"
-        cut -f -128 "${annovar_file}.hg38_multianno.txt" > "${annovar_file}.no-geno.hg38_multianno.txt"
+        Otherinfo1=$(awk -F'\t' 'NR==1{for(i=1;i<=NF;i++) if($i=="Otherinfo1"){print i; exit}}' "${annovar_file}.hg38_multianno.txt")
+        if (( Otherinfo1 > 1 )); then
+        cut -f "1-$((Otherinfo1-1))" "${annovar_file}.hg38_multianno.txt" > "${annovar_file}.no-geno.hg38_multianno.txt"
         mv "${annovar_file}.hg38_multianno.txt" "${annovar_file}.hg38_multianno.original.txt"
         annovar_file="${annovar_file}.no-geno.hg38_multianno"
+        else
+        echo "Annovar file does not contain genotypes"
+        fi
     fi
 
 fi

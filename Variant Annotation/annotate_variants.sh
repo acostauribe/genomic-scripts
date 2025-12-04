@@ -149,19 +149,30 @@ cat "${annovar_file}.header_new" "${annovar_file}.header_removed" > "${annovar_f
 rm "${annovar_file}.header"*
 
 if [[ -f "${annovar_file}.txt" && -s "${annovar_file}.txt" ]]; then
-echo "ANNOVAR file was successfully generated: ${annovar_file}"
-else
-echo "VCF annotation failed. Stopping script"
-return 1  # return with a status code of 1 to indicate an error.
+   echo "ANNOVAR file was successfully generated: ${annovar_file}"
+   else
+   echo "VCF annotation failed. Stopping script"
+   return 1  # return with a status code of 1 to indicate an error.
 fi
 
 remove_genotypes="FALSE"
 if [[ $remove_genotypes == "TRUE" ]]; then
-#echo "Removing genotypes from ANNOVAR file for easier filtering. Original file will be preserved as file.hg38_multianno.original.txt"
-annovar_file="${annovar_file%.hg38_multianno}"
-cut -f -128 "${annovar_file}.hg38_multianno.txt" > "${annovar_file}.no-geno.hg38_multianno.txt"
-mv "${annovar_file}.hg38_multianno.txt" "${annovar_file}.hg38_multianno.original.txt"
-annovar_file="${annovar_file}.no-geno.hg38_multianno"
+   echo "Removing genotypes from ANNOVAR file for easier filtering." 
+   # Original file will be preserved as file.hg38_multianno.original.txt and file.no-geno.hg38_multianno.txt will be generated.
+   
+   # Get the index of the column that matches Otherinfo1
+   Otherinfo1=$(awk -F'\t' 'NR==1{for(i=1;i<=NF;i++) if($i=="Otherinfo1"){print i; exit}}' "${annovar_file}.txt")
+  
+   # If Genotypes are present, extract only the annotations
+   if (( Otherinfo1 > 1 )); then
+   annovar_file="${annovar_file%.hg38_multianno}"
+   cut -f "1-$((Otherinfo1-1))" "${annovar_file}.hg38_multianno.txt" > "${annovar_file}.no-geno.hg38_multianno.txt"
+   mv "${annovar_file}.hg38_multianno.txt" "${annovar_file}.hg38_multianno.original.txt"
+   annovar_file="${annovar_file}.no-geno.hg38_multianno"
+   else
+   echo "Annovar file does not contain genotypes"
+   fi
+
 fi
 
 
